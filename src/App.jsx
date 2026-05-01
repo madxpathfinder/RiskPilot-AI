@@ -1,89 +1,36 @@
 import React, { useMemo, useState } from 'react';
-import { assessments as seedAssessments, controls as seedControls, documents as seedDocs, organization, questions, reports as seedReports, riskCategories, risks as seedRisks } from './data/seed';
-import { assessmentLevelFromOverall, calcRiskScore, overallAssessmentScore, riskLevelFromScore } from './lib/scoring';
+import { organization, questions, riskCategories } from './data/seed';
+import { overallAssessmentScore, assessmentLevelFromOverall } from './lib/scoring';
+import { canEdit } from './lib/permissions/rbac';
+import { listAssessments } from './lib/repositories/assessmentRepository';
+import { listRisks, updateRisk } from './lib/repositories/riskRepository';
+import { listDocuments, addDocument } from './lib/repositories/documentRepository';
+import { listReports } from './lib/repositories/reportRepository';
 
-const nav = ['Dashboard', 'Assessments', 'Risk Register', 'Controls', 'Documents', 'AI Assistant', 'Reports', 'Settings'];
-
-export function App() {
-  const [page, setPage] = useState('Dashboard');
-  const [risks, setRisks] = useState(seedRisks);
-  const [docs, setDocs] = useState(seedDocs);
-  const [assessments, setAssessments] = useState(seedAssessments);
-  const [language, setLanguage] = useState('en');
-  const [ai, setAi] = useState('');
-
-  const overall = useMemo(() => overallAssessmentScore(risks), [risks]);
-  const overallLevel = assessmentLevelFromOverall(overall);
-
-  const runAI = async (action, payload = {}) => {
-    const r = await fetch('http://localhost:4000/api/ai', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, payload: { ...payload, overallLevel }, language }),
-    });
-    const j = await r.json();
-    setAi(j.result || j.warning || 'No output');
-  };
-
-  return (
-    <div className='app-shell'>
-      <aside className='sidebar'>
-        <div className='brand'>RiskPilot AI</div>
-        {nav.map((n) => (
-          <button key={n} className={`nav-btn ${page === n ? 'active' : ''}`} onClick={() => setPage(n)}>{n}</button>
-        ))}
-      </aside>
-
-      <main className='content'>
-        <header className='topbar'>
-          <div>
-            <h1>{page}</h1>
-            <p>{organization.name} · {organization.industry} · {organization.country}</p>
-          </div>
-          <span className={`badge ${overallLevel.toLowerCase()}`}>Overall: {overall}/100 · {overallLevel}</span>
-        </header>
-
-        <p className='disclaimer'>This tool supports risk assessment and reporting. It does not replace legal, regulatory, audit, or professional risk advice.</p>
-
-        {page === 'Dashboard' && <Dashboard risks={risks} assessments={assessments} overall={overall} overallLevel={overallLevel} runAI={runAI} ai={ai} />}
-        {page === 'Assessments' && <Assessments assessments={assessments} setAssessments={setAssessments} />}
-        {page === 'Risk Register' && <RiskRegister risks={risks} setRisks={setRisks} />}
-        {page === 'Controls' && <Controls controls={seedControls} />}
-        {page === 'Documents' && <Documents docs={docs} setDocs={setDocs} runAI={runAI} ai={ai} />}
-        {page === 'AI Assistant' && <Assistant runAI={runAI} ai={ai} />}
-        {page === 'Reports' && <Reports reports={seedReports} />}
-        {page === 'Settings' && <Settings language={language} setLanguage={setLanguage} />}
-      </main>
-    </div>
-  );
+const nav=['Dashboard','Assessments','Risk Register','Controls','Documents','AI Assistant','Reports','Settings'];
+export function App(){
+  const [page,setPage]=useState('Dashboard'); const [role,setRole]=useState('Risk Manager'); const [language,setLanguage]=useState('en');
+  const [assessments]=useState(listAssessments()); const [risks,setRisks]=useState(listRisks()); const [documents,setDocuments]=useState(listDocuments()); const [reports]=useState(listReports());
+  const [ai,setAi]=useState(''); const overall=overallAssessmentScore(risks); const level=assessmentLevelFromOverall(overall);
+  const top5=[...risks].sort((a,b)=>b.score-a.score).slice(0,5); const overdue=risks.filter(r=>new Date(r.dueDate)<new Date()&&r.status!=='Mitigated').length;
+  const runAI=async(action,payload={})=>{const r=await fetch('http://localhost:4000/api/ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,payload,language})});const j=await r.json();setAi(j.result||j.warning)};
+  return <div className='app-shell'><aside className='sidebar'><h2>RiskPilot AI</h2>{nav.map(n=><button key={n} className={page===n?'active':''} onClick={()=>setPage(n)}>{n}</button>)}</aside>
+  <main><header className='topbar'><div><strong>{organization.name}</strong><small>{role} · {language.toUpperCase()}</small></div><button onClick={()=>runAI('summary',{overallLevel:level})}>Quick AI Brief</button></header>
+  <p className='disclaimer'>This tool supports risk assessment and reporting. It does not replace legal, regulatory, audit, or professional risk advice.</p>
+  {page==='Dashboard'&&<><section className='kpi'>{[['Critical',risks.filter(r=>r.level==='Critical').length],['High',risks.filter(r=>r.level==='High').length],['Open',risks.filter(r=>r.status==='Open').length],['Overdue',overdue]].map(([k,v])=><article key={k} className='card'><span>{k} risks</span><h3>{v}</h3></article>)}<article className='card ring'><div className='score-ring' style={{background:`conic-gradient(#2563eb ${overall*3.6}deg,#e5e7eb 0deg)`}}><div>{overall}</div></div><span>Overall score</span><b className={`badge ${level.toLowerCase()}`}>{level}</b></article></section>
+  <section className='grid2'><div className='panel'><h3>Risk distribution</h3>{riskCategories.map(c=>{const n=risks.filter(r=>r.category===c).length;return <div key={c} className='bar'><label>{c}</label><div><i style={{width:`${n*8}%`}}/>{n}</div></div>})}</div>
+  <div className='panel'><h3>Top 5 risks</h3><table><tbody>{top5.map(r=><tr key={r.id}><td>{r.title}</td><td>{r.score}</td><td><span className={`badge ${r.level.toLowerCase()}`}>{r.level}</span></td></tr>)}</tbody></table></div></section><pre>{ai}</pre></>}
+  {page==='Assessments'&&<Assessments assessments={assessments} questions={questions} canWrite={canEdit(role)} />}
+  {page==='Risk Register'&&<RiskRegister risks={risks} setRisks={setRisks} canWrite={canEdit(role)} />}
+  {page==='Documents'&&<Documents docs={documents} setDocs={setDocuments} runAI={runAI} canWrite={canEdit(role)} ai={ai} />}
+  {page==='AI Assistant'&&<Assistant runAI={runAI} ai={ai} />}
+  {page==='Reports'&&<Reports reports={reports} risks={risks} overall={overall} />}
+  {page==='Controls'&&<div className='panel'>Use controls from seed data.</div>}
+  {page==='Settings'&&<div className='panel'><label>Role<select value={role} onChange={e=>setRole(e.target.value)}><option>Admin</option><option>Risk Manager</option><option>Auditor</option><option>Viewer</option></select></label><label>Language<select value={language} onChange={e=>setLanguage(e.target.value)}><option value='en'>English</option><option value='az'>Azerbaijani</option></select></label><p>Documents are treated as confidential.</p></div>}
+  </main></div>
 }
-
-function Dashboard({ risks, assessments, overall, overallLevel, runAI, ai }) {
-  const kpis = [
-    ['Overall Score', `${overall}/100`],
-    ['Risk Level', overallLevel],
-    ['Critical Risks', risks.filter((r) => r.level === 'Critical').length],
-    ['High Risks', risks.filter((r) => r.level === 'High').length],
-    ['Open Risks', risks.filter((r) => r.status === 'Open').length],
-  ];
-  return <>
-    <section className='kpi-grid'>{kpis.map(([t, v]) => <article key={t} className='card'><h3>{t}</h3><strong>{v}</strong></article>)}</section>
-    <section className='panel'>
-      <h3>Recent Assessments</h3>
-      <table><tbody>{assessments.map((a) => <tr key={a.id}><td>{a.title}</td><td>{a.status}</td><td>{a.overallScore}</td><td>{a.riskLevel}</td></tr>)}</tbody></table>
-    </section>
-    <section className='panel'>
-      <h3>AI Risk Posture Summary</h3>
-      <button onClick={() => runAI('summary')}>Generate</button>
-      <pre>{ai}</pre>
-    </section>
-  </>;
-}
-
-function Assessments({ assessments, setAssessments }) { return <section className='panel'><div className='row'><h3>Assessments</h3><button onClick={() => setAssessments((a) => [{ id: `asm-${a.length + 1}`, title: 'New Assessment', scope: 'Custom', status: 'Draft', createdAt: new Date().toISOString(), organizationId: 'org-1', completedAt: null, overallScore: 0, riskLevel: 'Low' }, ...a])}>Start New Assessment</button></div><table><tbody>{assessments.map((a) => <tr key={a.id}><td>{a.title}</td><td>{a.scope}</td><td>{a.status}</td><td>{a.overallScore}</td><td>{a.riskLevel}</td></tr>)}</tbody></table><p className='muted'>Flow: Scope → Company Context → Questionnaire ({questions.length}) → Risk Review → Complete</p></section>; }
-function RiskRegister({ risks, setRisks }) { return <section className='panel'><div className='row'><h3>Risk Register</h3><button onClick={() => { const l = 3, i = 3, s = calcRiskScore(l, i); setRisks((r) => [{ id: `risk-${r.length + 1}`, assessmentId: 'asm-2', title: 'New risk', category: riskCategories[0], description: 'Manual risk.', likelihood: l, impact: i, score: s, level: riskLevelFromScore(s), owner: 'Risk Manager', status: 'Open', recommendation: 'Define remediation.', dueDate: '2026-08-01', createdAt: new Date().toISOString() }, ...r]); }}>Add Risk</button></div><table><tbody>{risks.map((r) => <tr key={r.id}><td>{r.title}</td><td>{r.category}</td><td>{r.score}</td><td>{r.level}</td><td>{r.owner}</td><td>{r.status}</td></tr>)}</tbody></table></section>; }
-function Controls({ controls }) { return <section className='panel'><h3>Controls</h3><table><tbody>{controls.map((c) => <tr key={c.id}><td>{c.title}</td><td>{c.status}</td><td>{c.effectiveness}</td><td>{c.owner}</td></tr>)}</tbody></table></section>; }
-function Documents({ docs, setDocs, runAI, ai }) { const [name, setName] = useState(''); const [text, setText] = useState(''); return <section className='panel'><h3>Documents</h3><input placeholder='Document name' value={name} onChange={(e) => setName(e.target.value)} /><textarea placeholder='Paste confidential text' value={text} onChange={(e) => setText(e.target.value)} /><button onClick={() => { setDocs((d) => [{ id: `doc-${d.length + 1}`, organizationId: 'org-1', name: name || 'Untitled', type: 'Procedure', uploadedAt: new Date().toISOString(), summary: text.slice(0, 160), detectedRisks: ['Operational Risk'], missingEvidence: ['Approval metadata'] }, ...d]); runAI('summary', { text }); }}>Analyze Document</button><ul>{docs.map((d) => <li key={d.id}>{d.name} — {d.summary}</li>)}</ul><pre>{ai}</pre></section>; }
-function Assistant({ runAI, ai }) { return <section className='panel'><h3>AI Assistant</h3><div className='row'><button onClick={() => runAI('findings')}>Analyze current assessment</button><button onClick={() => runAI('summary')}>Executive summary</button><button onClick={() => runAI('plan')}>30/60/90 plan</button></div><pre>{ai}</pre></section>; }
-function Reports({ reports }) { return <section className='panel'><div className='row'><h3>Reports</h3><button onClick={() => window.print()}>Download PDF</button></div>{reports.map((r) => <article key={r.id} className='report'><h4>{r.title}</h4><p>{r.executiveSummary}</p></article>)}</section>; }
-function Settings({ language, setLanguage }) { return <section className='panel'><h3>Settings</h3><p>Roles: Admin, Risk Manager, Auditor, Viewer</p><label>AI Language <select value={language} onChange={(e) => setLanguage(e.target.value)}><option value='en'>English</option><option value='az'>Azerbaijani</option></select></label></section>; }
+function Assessments({assessments,questions,canWrite}){const [step,setStep]=useState(1);const [answers,setAnswers]=useState({}); const q=questions[0];return <div className='panel'><h3>Assessment Wizard</h3><div className='stepper'>{[1,2,3,4,5].map(s=><span key={s} className={step>=s?'on':''}>Step {s}</span>)}</div>{step===3&&<div><p>{q.text}</p><select onChange={e=>setAnswers(a=>({...a,[q.id]:e.target.value}))}><option>Yes</option><option>No</option></select></div>}<div className='row'><button disabled={step===1} onClick={()=>setStep(s=>s-1)}>Back</button><button disabled={!canWrite} onClick={()=>setStep(s=>Math.min(5,s+1))}>Next</button></div><h4>Assessments</h4><table><tbody>{assessments.map(a=><tr key={a.id}><td>{a.title}</td><td>{a.status}</td></tr>)}</tbody></table><small>{!canWrite&&'Viewer/Auditor cannot modify assessments.'}</small></div>}
+function RiskRegister({risks,setRisks,canWrite}){const [filter,setFilter]=useState('');const shown=risks.filter(r=>!filter||r.level===filter||r.status===filter||r.category===filter);return <div className='panel'><div className='row'><h3>Risk Register</h3><select value={filter} onChange={e=>setFilter(e.target.value)}><option value=''>All</option><option>Low</option><option>Medium</option><option>High</option><option>Critical</option><option>Open</option><option>In Progress</option></select></div><table><tbody>{shown.map(r=><tr key={r.id}><td>{r.title}</td><td>{r.category}</td><td><input type='number' min='1' max='5' value={r.likelihood} disabled={!canWrite} onChange={e=>{const u=updateRisk(r.id,{likelihood:e.target.value});setRisks(rs=>rs.map(x=>x.id===u.id?u:x));}}/></td><td><input type='number' min='1' max='5' value={r.impact} disabled={!canWrite} onChange={e=>{const u=updateRisk(r.id,{impact:e.target.value});setRisks(rs=>rs.map(x=>x.id===u.id?u:x));}}/></td><td>{r.score}</td><td><span className={`badge ${r.level.toLowerCase()}`}>{r.level}</span></td><td>{r.owner}</td></tr>)}</tbody></table></div>}
+function Documents({docs,setDocs,runAI,canWrite,ai}){const [name,setName]=useState('');const [rawText,setRawText]=useState(''); return <div className='panel'><h3>Documents (Confidential)</h3><input placeholder='Document name' value={name} onChange={e=>setName(e.target.value)}/><textarea placeholder='Paste document text' value={rawText} onChange={e=>setRawText(e.target.value)}/><button disabled={!canWrite} onClick={()=>{const doc={id:`doc-${Date.now()}`,organizationId:'org-1',name,type:'Policy',uploadedAt:new Date().toISOString(),rawText,summary:rawText.slice(0,120),detectedRisks:['Compliance Risk'],missingEvidence:['Approval logs']};addDocument(doc);setDocs(d=>[doc,...d]);runAI('summary',{text:rawText});}}>Analyze</button>{docs.length===0?<p className='empty'>No documents yet.</p>:<ul>{docs.map(d=><li key={d.id}>{d.name}: {d.summary}</li>)}</ul>}<pre>{ai}</pre></div>}
+function Assistant({runAI,ai}){const [msgs,setMsgs]=useState([{role:'assistant',text:'How can I support your risk review today?'}]); const [text,setText]=useState(''); const send=async(prompt)=>{const az=/[əğıöşç]/i.test(prompt); await runAI('findings',{prompt,language:az?'az':'en'});setMsgs(m=>[...m,{role:'user',text:prompt},{role:'assistant',text:'Generated. See AI output below.'}]);setText('');}; return <div className='panel'><div className='chips'><button onClick={()=>runAI('summary')}>Analyze current assessment</button><button onClick={()=>runAI('plan')}>30/60/90 plan</button></div><div className='chat'>{msgs.map((m,i)=><p key={i} className={m.role}>{m.text}</p>)}</div><div className='row'><input value={text} onChange={e=>setText(e.target.value)} placeholder='Ask AI assistant...'/><button onClick={()=>send(text)}>Send</button></div><pre>{ai}</pre></div>}
+function Reports({reports,risks,overall}){return <div className='panel report'><button onClick={()=>window.print()}>Download PDF</button>{reports.map(r=><article key={r.id}><h2>{r.title}</h2><h4>Executive Summary</h4><p>{r.executiveSummary}</p><h4>Overall Score: {overall}</h4><h4>Appendix Risk Register</h4><table><tbody>{risks.map(x=><tr key={x.id}><td>{x.title}</td><td>{x.score}</td><td>{x.level}</td></tr>)}</tbody></table></article>)}</div>}
